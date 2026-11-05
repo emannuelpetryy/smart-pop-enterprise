@@ -1,0 +1,195 @@
+// Smart POP & Operational Passport - Prisma Schema
+// Dual compatible: SQLite (Zero-config local dev & edge agent) and PostgreSQL (Production Enterprise)
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Pilar 2: Usuários e Colaboradores (Integrado com ERP / eSocial)
+model User {
+  id                 String   @id @default(uuid())
+  registrationNumber String   @unique // Matrícula
+  badgeNumber        String   @unique // Número do Crachá RFID
+  name               String
+  email              String   @unique
+  role               String   // "OPERADOR", "SUPERVISOR", "ENGENHEIRO_QUALIDADE", "GERENTE_PLANTA"
+  department         String   // ex: "Estamparia", "Usinagem", "Pintura"
+  plant              String   // ex: "Planta São Bernardo", "Planta Betim"
+  status             String   @default("ATIVO") // "ATIVO", "AFASTADO_MEDICO", "FERIAS", "DESLIGADO"
+  zone0Access        Boolean  @default(true) // Portaria externa / Entrada CLT garantida
+  totpSecret         String   // Chave mestra base32 para QR Code dinâmico anti-fraude
+  pinCode            String   @default("1234") // PIN corporativo para login em Quiosque/Tablet
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  passports          QualificationPassport[]
+  ojtAsOperator      OjtSignOffRecord[]       @relation("OperatorOjt")
+  ojtAsSupervisor    OjtSignOffRecord[]       @relation("SupervisorOjt")
+  pokaYokeAudits     PokaYokePreUseChecklist[]
+  accessLogs         TurnstileAccessLog[]
+  lpaAudits          LpaAudit[]               @relation("OperatorLpa")
+  conductedLpas      LpaAudit[]               @relation("AuditorLpa")
+}
+
+// Pilar 1 & 3: Ativo Industrial / Máquina / Posto de Trabalho
+model Asset {
+  id               String   @id @default(uuid())
+  code             String   @unique // ex: "PRE-400T-01", "TORNO-CNC-04"
+  name             String   // ex: "Prensa Excêntrica 400 Toneladas"
+  area             String   // ex: "Estamparia Pesada"
+  zone             String   @default("ZONA_1_CHAO_DE_FABRICA")
+  nrStandard       String   @default("NR-12") // Norma aplicável (NR-10, NR-12, NR-35)
+  mesInterlock     Boolean  @default(true) // Requer liberação lógica MES/SCADA
+  currentMesStatus String   @default("BLOQUEADA") // "BLOQUEADA", "LIBERADA"
+  activeUnlockToken String?
+  tokenExpiresAt   DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  pops             PopDocument[]
+  passports        QualificationPassport[]
+  pokaYokeChecks   PokaYokePreUseChecklist[]
+  ojtRecords       OjtSignOffRecord[]
+  lpaAudits        LpaAudit[]
+}
+
+// Pilar 1: Procedimento Operacional Padrão (Smart POP)
+model PopDocument {
+  id                         String   @id @default(uuid())
+  code                       String   // ex: "POP-EST-042"
+  title                      String   // ex: "Operação e Setup de Prensa Excêntrica"
+  version                    String   // ex: "v2.2"
+  category                   String   // "OPERACAO", "SETUP", "MANUTENCAO", "SEGURANCA"
+  summary                    String
+  theoreticalDurationMinutes Int      @default(30)
+  targetAssetId              String?
+  stepsContent               String   // JSON stringified: lista de micro-passos visuais com avisos de segurança
+  safetyPoints               String   // JSON stringified: Key Safety Points (Pontos Críticos de Atenção)
+  quizQuestions              String   // JSON stringified: perguntas de micro-assimilação (mínimo 80% acertos)
+  deltaChanges               String?  // JSON stringified: resumo de alterações em relação à versão anterior
+  status                     String   @default("PUBLICADO") // "PUBLICADO", "REVISAO_PENDENTE", "HISTORICO"
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+
+  asset                      Asset?   @relation(fields: [targetAssetId], references: [id])
+  passports                  QualificationPassport[]
+  ojtRecords                 OjtSignOffRecord[]
+  lpaAudits                  LpaAudit[]
+}
+
+// Pilar 1: Carteira Digital / Passaporte de Habilitação (Matriz 3D: Usuário x Ativo x Sub-Atividade)
+model QualificationPassport {
+  id                     String    @id @default(uuid())
+  userId                 String
+  assetId                String
+  subActivity            String    // "OPERACAO_CONTINUA", "SETUP_ESTAMPO", "MANUTENCAO_PREVENTIVA"
+  twiLevel               Int       @default(1) // 0: Bloqueado, 1: Teórico, 2: Tutela, 3: Autônomo, 4: Multiplicador
+  popId                  String
+  theoryCompletedAt      DateTime?
+  theoryScore            Float?    // Nota de assimilação (ex: 95.0)
+  ojtApprovedAt          DateTime? // Data do sign-off presencial
+  ojtSupervisorId        String?
+  ojtEvidencePhotoUrl    String?
+  ojtSignatureHash       String?
+  status                 String    @default("PENDENTE_TEORIA") // "PENDENTE_TEORIA", "EM_TUTELA", "HABILITADO", "RECICLAGEM_DELTA_PENDENTE", "REVOGADO"
+  deltaToleranceDeadline DateTime? // Limite para reciclagem após revisão de POP
+  expiresAt              DateTime? // Validade da reciclagem periódica
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  user                   User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  asset                  Asset       @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  pop                    PopDocument @relation(fields: [popId], references: [id])
+
+  @@unique([userId, assetId, subActivity])
+}
+
+// Pilar 3: OJT Sign-Off (Homologação Presencial de Campo pelo Supervisor)
+model OjtSignOffRecord {
+  id                      String   @id @default(uuid())
+  userId                  String   // Operador avaliado
+  supervisorId            String   // Supervisor validador
+  assetId                 String
+  popId                   String
+  subActivity             String
+  safetyPointsValidated   String   // JSON stringified: lista de validações de campo
+  evidencePhotoBase64     String?  // Evidência fotográfica obrigatória
+  supervisorSignature     String   // SVG / Base64 da assinatura do supervisor
+  operatorSignature       String   // SVG / Base64 da assinatura do operador
+  cryptographicTimestamp  String   // Hash SHA-256 do bloco de aprovação
+  verdict                 String   // "APROVADO", "REPROVADO_NECESSITA_TUTELA"
+  feedbackNotes           String
+  createdAt               DateTime @default(now())
+
+  user                    User        @relation("OperatorOjt", fields: [userId], references: [id])
+  supervisor              User        @relation("SupervisorOjt", fields: [supervisorId], references: [id])
+  asset                   Asset       @relation(fields: [assetId], references: [id])
+  pop                     PopDocument @relation(fields: [popId], references: [id])
+}
+
+// Pilar 3: Poka-Yoke Digital (Checklist Pré-Uso de Linha e Liberação Lógica MES)
+model PokaYokePreUseChecklist {
+  id              String    @id @default(uuid())
+  assetId         String
+  operatorId      String
+  shift           String    // "TURNO_1", "TURNO_2", "TURNO_3"
+  checklistData   String    // JSON stringified: itens de checagem obrigatória (nível óleo, botão emergência)
+  allApproved     Boolean   @default(false)
+  mesUnlockToken  String?   // Token emitido para o MES SCADA
+  tokenValidUntil DateTime?
+  createdAt       DateTime  @default(now())
+
+  asset           Asset     @relation(fields: [assetId], references: [id])
+  operator        User      @relation(fields: [operatorId], references: [id])
+}
+
+// Pilar 2: Simulador e Gateway de Catracas On-Premise (< 20ms Edge Access)
+model TurnstileAccessLog {
+  id             String   @id @default(uuid())
+  userId         String
+  zone           String   // "ZONA_0_PORTARIA", "ZONA_1_CHAO_DE_FABRICA"
+  turnstileCode  String   // ex: "CATRACA-PORTARIA-01", "TORNIQUETE-LINHA-04"
+  accessGranted  Boolean
+  decisionReason String   // ex: "HABILITADO_NIVEL_3", "PENDENTE_OJT_SUPERVISOR", "AFASTADO_MEDICO_S2230"
+  latencyMs      Int      // ex: 12ms
+  source         String   @default("EDGE_GATEWAY_OFFLINE_CACHE")
+  createdAt      DateTime @default(now())
+
+  user           User     @relation(fields: [userId], references: [id])
+}
+
+// Pilar 3: Auditoria Escalonada de Processo (LPA - Layered Process Audits)
+model LpaAudit {
+  id                 String   @id @default(uuid())
+  auditorId          String
+  auditorRole        String   // "SUPERVISOR", "QUALIDADE", "GERENTE"
+  assetId            String
+  operatorId         String
+  popId              String
+  complianceScore    Float    // ex: 100.0 ou 60.0
+  deviationsFound    String   // JSON stringified: desvios encontrados
+  actionPlan         String?  // Plano de ação imediato
+  downgradedToLevel1 Boolean  @default(false) // Se desvio grave, rebaixa para Nível 1
+  createdAt          DateTime @default(now())
+
+  auditor            User        @relation("AuditorLpa", fields: [auditorId], references: [id])
+  operator           User        @relation("OperatorLpa", fields: [operatorId], references: [id])
+  asset              Asset       @relation(fields: [assetId], references: [id])
+  pop                PopDocument @relation(fields: [popId], references: [id])
+}
+
+// Pilar 2: Auditoria de Eventos de RH (TOTVS, Senior, SAP e eSocial)
+model RhIntegrationEvent {
+  id                  String   @id @default(uuid())
+  eventType           String   // "S2200_ADMISSAO", "S2206_TRANSFERENCIA", "S2230_AFASTAMENTO", "S2299_DESLIGAMENTO"
+  externalEmployeeId  String
+  payloadJson         String
+  processed           Boolean  @default(true)
+  effectDescription   String
+  createdAt           DateTime @default(now())
+}

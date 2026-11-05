@@ -1,0 +1,184 @@
+// Smart POP & Operational Passport - Production PostgreSQL Schema
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id                 String   @id @default(uuid())
+  registrationNumber String   @unique
+  badgeNumber        String   @unique
+  name               String
+  email              String   @unique
+  role               String
+  department         String
+  plant              String
+  status             String   @default("ATIVO")
+  zone0Access        Boolean  @default(true)
+  totpSecret         String
+  pinCode            String   @default("1234")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  passports          QualificationPassport[]
+  ojtAsOperator      OjtSignOffRecord[]       @relation("OperatorOjt")
+  ojtAsSupervisor    OjtSignOffRecord[]       @relation("SupervisorOjt")
+  pokaYokeAudits     PokaYokePreUseChecklist[]
+  accessLogs         TurnstileAccessLog[]
+  lpaAudits          LpaAudit[]               @relation("OperatorLpa")
+  conductedLpas      LpaAudit[]               @relation("AuditorLpa")
+}
+
+model Asset {
+  id               String   @id @default(uuid())
+  code             String   @unique
+  name             String
+  area             String
+  zone             String   @default("ZONA_1_CHAO_DE_FABRICA")
+  nrStandard       String   @default("NR-12")
+  mesInterlock     Boolean  @default(true)
+  currentMesStatus String   @default("BLOQUEADA")
+  activeUnlockToken String?
+  tokenExpiresAt   DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  pops             PopDocument[]
+  passports        QualificationPassport[]
+  pokaYokeChecks   PokaYokePreUseChecklist[]
+  ojtRecords       OjtSignOffRecord[]
+  lpaAudits        LpaAudit[]
+}
+
+model PopDocument {
+  id                         String   @id @default(uuid())
+  code                       String
+  title                      String
+  version                    String
+  category                   String
+  summary                    String
+  theoreticalDurationMinutes Int      @default(30)
+  targetAssetId              String?
+  stepsContent               String
+  safetyPoints               String
+  quizQuestions              String
+  deltaChanges               String?
+  status                     String   @default("PUBLICADO")
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+
+  asset                      Asset?   @relation(fields: [targetAssetId], references: [id])
+  passports                  QualificationPassport[]
+  ojtRecords                 OjtSignOffRecord[]
+  lpaAudits                  LpaAudit[]
+}
+
+model QualificationPassport {
+  id                     String    @id @default(uuid())
+  userId                 String
+  assetId                String
+  subActivity            String
+  twiLevel               Int       @default(1)
+  popId                  String
+  theoryCompletedAt      DateTime?
+  theoryScore            Float?
+  ojtApprovedAt          DateTime?
+  ojtSupervisorId        String?
+  ojtEvidencePhotoUrl    String?
+  ojtSignatureHash       String?
+  status                 String    @default("PENDENTE_TEORIA")
+  deltaToleranceDeadline DateTime?
+  expiresAt              DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  user                   User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  asset                  Asset       @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  pop                    PopDocument @relation(fields: [popId], references: [id])
+
+  @@unique([userId, assetId, subActivity])
+}
+
+model OjtSignOffRecord {
+  id                      String   @id @default(uuid())
+  userId                  String
+  supervisorId            String
+  assetId                 String
+  popId                   String
+  subActivity             String
+  safetyPointsValidated   String
+  evidencePhotoBase64     String?
+  supervisorSignature     String
+  operatorSignature       String
+  cryptographicTimestamp  String
+  verdict                 String
+  feedbackNotes           String
+  createdAt               DateTime @default(now())
+
+  user                    User        @relation("OperatorOjt", fields: [userId], references: [id])
+  supervisor              User        @relation("SupervisorOjt", fields: [supervisorId], references: [id])
+  asset                   Asset       @relation(fields: [assetId], references: [id])
+  pop                     PopDocument @relation(fields: [popId], references: [id])
+}
+
+model PokaYokePreUseChecklist {
+  id              String    @id @default(uuid())
+  assetId         String
+  operatorId      String
+  shift           String
+  checklistData   String
+  allApproved     Boolean   @default(false)
+  mesUnlockToken  String?
+  tokenValidUntil DateTime?
+  createdAt       DateTime  @default(now())
+
+  asset           Asset     @relation(fields: [assetId], references: [id])
+  operator        User      @relation(fields: [operatorId], references: [id])
+}
+
+model TurnstileAccessLog {
+  id             String   @id @default(uuid())
+  userId         String
+  zone           String
+  turnstileCode  String
+  accessGranted  Boolean
+  decisionReason String
+  latencyMs      Int
+  source         String   @default("EDGE_GATEWAY_OFFLINE_CACHE")
+  createdAt      DateTime @default(now())
+
+  user           User     @relation(fields: [userId], references: [id])
+}
+
+model LpaAudit {
+  id                 String   @id @default(uuid())
+  auditorId          String
+  auditorRole        String
+  assetId            String
+  operatorId         String
+  popId              String
+  complianceScore    Float
+  deviationsFound    String
+  actionPlan         String?
+  downgradedToLevel1 Boolean  @default(false)
+  createdAt          DateTime @default(now())
+
+  auditor            User        @relation("AuditorLpa", fields: [auditorId], references: [id])
+  operator           User        @relation("OperatorLpa", fields: [operatorId], references: [id])
+  asset              Asset       @relation(fields: [assetId], references: [id])
+  pop                PopDocument @relation(fields: [popId], references: [id])
+}
+
+model RhIntegrationEvent {
+  id                  String   @id @default(uuid())
+  eventType           String
+  externalEmployeeId  String
+  payloadJson         String
+  processed           Boolean  @default(true)
+  effectDescription   String
+  createdAt           DateTime @default(now())
+}
