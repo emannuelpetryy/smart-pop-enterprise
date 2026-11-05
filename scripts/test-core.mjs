@@ -7,7 +7,7 @@ const prisma = new PrismaClient();
 
 async function runTests() {
   console.log("=================================================");
-  console.log("🧪 STARTING SMART POP ENTERPRISE VERIFICATION SUITE");
+  console.log("🧪 SMART POP ENTERPRISE RIGOROUS VERIFICATION SUITE");
   console.log("=================================================\n");
 
   let passed = 0;
@@ -24,7 +24,7 @@ async function runTests() {
   }
 
   try {
-    // 1. Database seed inspection
+    // 1. Database State Inspection
     console.log("--- 1. Database State Inspection ---");
     const userCount = await prisma.user.count();
     const assetCount = await prisma.asset.count();
@@ -76,7 +76,6 @@ async function runTests() {
     assert(marianaZona1.statusCode === "BLOCKED_TRAINING", "Zona 1 status code is BLOCKED_TRAINING");
 
     // Case B: Roberto Silva (Nível 3 - Autônomo Habilitado com OJT aprovado)
-    // Na Zona 1, DEVE ser liberado
     const robertoZona1 = await evaluateGateAccess({
       registrationNumber: "OP-10492",
       zone: "ZONA_1_CHAO_DE_FABRICA",
@@ -86,6 +85,16 @@ async function runTests() {
     assert(robertoZona1.accessGranted === true, "Zona 1 allows Level 3 Autonomous operator");
     assert(robertoZona1.statusCode === "GRANTED", "Roberto Zona 1 status is GRANTED");
 
+    // 3D Matrix Granularity: Setup de Estampo é Nível 2 (Tutela/Shadowing)
+    const robertoSetup = await evaluateGateAccess({
+      registrationNumber: "OP-10492",
+      zone: "ZONA_1_CHAO_DE_FABRICA",
+      assetCode: "PRE-400T-01",
+      subActivity: "SETUP_ESTAMPO",
+    });
+    assert(robertoSetup.accessGranted === true, "Zona 1 conditionally allows Nível 2 Setup under Tutela");
+    assert(robertoSetup.statusCode === "GRANTED_WITH_WARNING", "Roberto Setup status code is GRANTED_WITH_WARNING");
+
     // Sub-atividade de Manutenção Preventiva do Roberto Silva é Nível 0 (Revogada/Bloqueada)
     const robertoManutencao = await evaluateGateAccess({
       registrationNumber: "OP-10492",
@@ -94,6 +103,7 @@ async function runTests() {
       subActivity: "MANUTENCAO_PREVENTIVA",
     });
     assert(robertoManutencao.accessGranted === false, "Zona 1 blocks operator on unauthorized sub-activity (3D matrix)");
+    assert(robertoManutencao.statusCode === "BLOCKED_TRAINING", "Unauthorized sub-activity is BLOCKED_TRAINING");
 
     // Case C: Julia Antunes (Afastamento Médico S-2230)
     const juliaZona1 = await evaluateGateAccess({
@@ -103,11 +113,86 @@ async function runTests() {
     assert(juliaZona1.accessGranted === false, "Zona 1 blocks employee on medical leave (S-2230)");
     assert(juliaZona1.statusCode === "BLOCKED_HEALTH", "Julia Zona 1 status code is BLOCKED_HEALTH");
 
-    // Case D: Latency Check (< 20ms local edge gateway)
+    // Case D: Unknown / Non-existent Badge or Registration
+    const unknownBadge = await evaluateGateAccess({
+      badgeNumber: "RFID-NONEXISTENT-99999",
+      zone: "ZONA_0_PORTARIA",
+    });
+    assert(unknownBadge.accessGranted === false, "Unknown badge is strictly blocked");
+    assert(unknownBadge.statusCode === "BLOCKED_LEGAL", "Unknown badge status code is BLOCKED_LEGAL");
+
+    // Case E: Dynamic QR / TOTP Authentication at Turnstile
+    const robertoTotp = generateTotp(testSecret).code;
+    const gateWithValidTotp = await evaluateGateAccess({
+      registrationNumber: "OP-10492",
+      totpCode: robertoTotp,
+      zone: "ZONA_1_CHAO_DE_FABRICA",
+      assetCode: "PRE-400T-01",
+      subActivity: "OPERACAO_CONTINUA",
+    });
+    assert(gateWithValidTotp.accessGranted === true, "Gate accepts valid Dynamic QR TOTP code");
+
+    const gateWithInvalidTotp = await evaluateGateAccess({
+      registrationNumber: "OP-10492",
+      totpCode: "000000",
+      zone: "ZONA_1_CHAO_DE_FABRICA",
+      assetCode: "PRE-400T-01",
+      subActivity: "OPERACAO_CONTINUA",
+    });
+    assert(gateWithInvalidTotp.accessGranted === false, "Gate rejects expired/invalid Dynamic QR TOTP code");
+    assert(gateWithInvalidTotp.statusCode === "BLOCKED_LEGAL", "Invalid TOTP returns BLOCKED_LEGAL");
+
+    // Case F: Security Check - Revoked Passport MUST NOT grant access even if TWI level was 3
+    console.log("\n--- 4. Revocation & Expiration Edge Cases ---");
+    const robertoUser = await prisma.user.findFirst({
+      where: { registrationNumber: "OP-10492" },
+      include: { passports: { include: { asset: true } } },
+    });
+    const robertoPassport = robertoUser.passports.find(
+      (p) => p.asset.code === "PRE-400T-01" && p.subActivity === "OPERACAO_CONTINUA"
+    );
+
+    // Temporarily set to REVOGADO
+    await prisma.qualificationPassport.update({
+      where: { id: robertoPassport.id },
+      data: { status: "REVOGADO" },
+    });
+
+    const revokedGateCheck = await evaluateGateAccess({
+      userId: robertoUser.id,
+      zone: "ZONA_1_CHAO_DE_FABRICA",
+      assetCode: "PRE-400T-01",
+      subActivity: "OPERACAO_CONTINUA",
+    });
+    assert(revokedGateCheck.accessGranted === false, "Gate BLOCKS operator with REVOGADO passport despite TWI level 3");
+    assert(revokedGateCheck.statusCode === "BLOCKED_TRAINING", "Revoked passport returns BLOCKED_TRAINING");
+
+    // Temporarily set to expired annual renewal
+    await prisma.qualificationPassport.update({
+      where: { id: robertoPassport.id },
+      data: { status: "HABILITADO", expiresAt: new Date(Date.now() - 3600 * 1000) },
+    });
+
+    const expiredGateCheck = await evaluateGateAccess({
+      userId: robertoUser.id,
+      zone: "ZONA_1_CHAO_DE_FABRICA",
+      assetCode: "PRE-400T-01",
+      subActivity: "OPERACAO_CONTINUA",
+    });
+    assert(expiredGateCheck.accessGranted === false, "Gate BLOCKS operator with expired periodic qualification (NR-12)");
+    assert(expiredGateCheck.statusCode === "BLOCKED_DELTA_EXPIRED", "Expired qualification returns BLOCKED_DELTA_EXPIRED");
+
+    // Restore roberto passport to normal valid state
+    await prisma.qualificationPassport.update({
+      where: { id: robertoPassport.id },
+      data: { status: "HABILITADO", expiresAt: new Date(Date.now() + 365 * 24 * 3600 * 1000) },
+    });
+
+    // Case G: Edge Gate Latency Check (< 20ms local edge gateway)
     assert(robertoZona1.latencyMs < 30, `Edge turnstile latency < 30ms (${robertoZona1.latencyMs}ms measured)`);
 
-    // 4. Cryptographic Sign-Off & MES Token
-    console.log("\n--- 4. Cryptographic Sign-Off & MES Interlock ---");
+    // 5. Cryptographic Sign-Off & MES Token
+    console.log("\n--- 5. Cryptographic Sign-Off & MES Interlock ---");
     const sampleAuditHash = generateOjtAuditHash({
       operatorId: "op-1",
       supervisorId: "sp-1",

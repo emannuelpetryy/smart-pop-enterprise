@@ -22,8 +22,9 @@ interface PassportClientProps {
   assets: any[];
 }
 
-export default function PassportClientView({ users, assets }: PassportClientProps) {
-  const [selectedUserId, setSelectedUserId] = useState<string>(users[0]?.id || "");
+export default function PassportClientView({ users: initialUsers, assets }: PassportClientProps) {
+  const [userList, setUserList] = useState<any[]>(initialUsers);
+  const [selectedUserId, setSelectedUserId] = useState<string>(initialUsers[0]?.id || "");
   const [qrData, setQrData] = useState<{
     qrCodeImage: string;
     totpCode: string;
@@ -34,8 +35,9 @@ export default function PassportClientView({ users, assets }: PassportClientProp
   const [deltaModalOpen, setDeltaModalOpen] = useState<boolean>(false);
   const [deltaQuizAnswered, setDeltaQuizAnswered] = useState<boolean>(false);
   const [selectedDeltaOption, setSelectedDeltaOption] = useState<number | null>(null);
+  const [isSubmittingDelta, setIsSubmittingDelta] = useState<boolean>(false);
 
-  const selectedUser = users.find((u) => u.id === selectedUserId) || users[0];
+  const selectedUser = userList.find((u) => u.id === selectedUserId) || userList[0];
 
   // Fetch QR Code and TOTP
   const fetchQr = async (userId: string) => {
@@ -87,7 +89,7 @@ export default function PassportClientView({ users, assets }: PassportClientProp
             Selecione o Colaborador para Visualizar o Passaporte
           </label>
           <div className="flex flex-wrap gap-2">
-            {users.map((u) => (
+            {userList.map((u) => (
               <button
                 key={u.id}
                 onClick={() => {
@@ -95,7 +97,7 @@ export default function PassportClientView({ users, assets }: PassportClientProp
                   setDeltaQuizAnswered(false);
                   setSelectedDeltaOption(null);
                 }}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                className={`px-3 py-2 rounded-xl text-xs font-semibold transition-all min-h-[44px] ${
                   selectedUserId === u.id
                     ? "bg-industrial-600 text-white shadow-sm"
                     : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
@@ -401,24 +403,70 @@ export default function PassportClientView({ users, assets }: PassportClientProp
 
             <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
               <button
+                type="button"
                 onClick={() => setDeltaModalOpen(false)}
-                className="px-4 py-2 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-100"
+                className="px-4 py-2.5 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 min-h-[44px]"
               >
                 Cancelar
               </button>
               <button
-                disabled={selectedDeltaOption === null}
-                onClick={() => {
-                  if (selectedDeltaOption === 1) {
-                    setDeltaQuizAnswered(true);
-                    setDeltaModalOpen(false);
-                  } else {
+                type="button"
+                disabled={selectedDeltaOption === null || isSubmittingDelta}
+                onClick={async () => {
+                  if (selectedDeltaOption === null || !deltaPassport) return;
+                  if (selectedDeltaOption !== 1) {
                     alert("Resposta incorreta. A nova pressão mandatória é 6,2 bar.");
+                    return;
+                  }
+                  try {
+                    setIsSubmittingDelta(true);
+                    const res = await fetch("/api/passport/delta-recycle", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        userId: selectedUser.id,
+                        assetId: deltaPassport.assetId,
+                        popId: deltaPassport.popId,
+                        answerIndex: selectedDeltaOption,
+                      }),
+                    });
+                    const data = await res.json();
+                    if (res.ok) {
+                      setDeltaQuizAnswered(true);
+                      setDeltaModalOpen(false);
+                      setUserList((prev) =>
+                        prev.map((u) => {
+                          if (u.id !== selectedUser.id) return u;
+                          return {
+                            ...u,
+                            passports: u.passports.map((p: any) =>
+                              p.id === deltaPassport.id
+                                ? { ...p, status: "HABILITADO", deltaToleranceDeadline: null }
+                                : p
+                            ),
+                          };
+                        })
+                      );
+                    } else {
+                      alert(data.error || "Erro ao processar reciclagem delta.");
+                    }
+                  } catch (e) {
+                    console.error(e);
+                    alert("Falha ao comunicar com o servidor para reciclagem delta.");
+                  } finally {
+                    setIsSubmittingDelta(false);
                   }
                 }}
-                className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-medium text-xs transition-colors"
+                className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs transition-colors min-h-[44px] shadow-sm flex items-center gap-2"
               >
-                Confirmar Reciclagem
+                {isSubmittingDelta ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    <span>Revalidando...</span>
+                  </>
+                ) : (
+                  <span>Confirmar Reciclagem</span>
+                )}
               </button>
             </div>
           </div>

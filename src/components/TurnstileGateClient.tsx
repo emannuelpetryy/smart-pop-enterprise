@@ -29,6 +29,8 @@ export default function TurnstileGateClient({
 }: TurnstileProps) {
   const [selectedZone, setSelectedZone] = useState<"ZONA_0_PORTARIA" | "ZONA_1_CHAO_DE_FABRICA">("ZONA_1_CHAO_DE_FABRICA");
   const [selectedAssetCode, setSelectedAssetCode] = useState<string>("PRE-400T-01");
+  const [subActivity, setSubActivity] = useState<string>("OPERACAO_CONTINUA");
+  const [authMethod, setAuthMethod] = useState<"RFID_BADGE" | "DYNAMIC_QR">("RFID_BADGE");
   const [selectedUserId, setSelectedUserId] = useState<string>(users[0]?.id || "");
   const [isEvaluating, setIsEvaluating] = useState<boolean>(false);
   const [lastDecision, setLastDecision] = useState<any | null>(null);
@@ -45,16 +47,27 @@ export default function TurnstileGateClient({
       setIsEvaluating(true);
       setPulseActive(true);
 
+      let payloadBody: any = {
+        userId: targetUser.id,
+        zone: selectedZone,
+        assetCode: selectedAssetCode,
+        subActivity,
+      };
+
+      if (authMethod === "DYNAMIC_QR") {
+        // Fetch fresh dynamic QR payload with active TOTP code
+        const qrRes = await fetch(`/api/passport/${targetUser.id}/qr`);
+        const qrJson = await qrRes.json();
+        payloadBody.totpCode = qrJson.totpCode;
+      } else {
+        payloadBody.badgeNumber = targetUser.badgeNumber;
+        payloadBody.registrationNumber = targetUser.registrationNumber;
+      }
+
       const res = await fetch("/api/turnstile/check", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: targetUser.id,
-          badgeNumber: targetUser.badgeNumber,
-          registrationNumber: targetUser.registrationNumber,
-          zone: selectedZone,
-          assetCode: selectedAssetCode,
-        }),
+        body: JSON.stringify(payloadBody),
       });
 
       const data = await res.json();
@@ -154,6 +167,61 @@ export default function TurnstileGateClient({
             </select>
             <p className="text-[11px] text-slate-500 mt-1.5">
               A catraca valida a habilitação do operador especificamente para esta máquina.
+            </p>
+          </div>
+
+          {/* Sub-Activity Granular (3D Matrix) */}
+          <div>
+            <label className="text-xs font-semibold text-slate-500 block mb-2">
+              Sub-Atividade Granular (Matriz 3D):
+            </label>
+            <select
+              value={subActivity}
+              onChange={(e) => setSubActivity(e.target.value)}
+              className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-900 dark:text-white"
+            >
+              <option value="OPERACAO_CONTINUA">Operação de Produção Contínua</option>
+              <option value="SETUP_ESTAMPO">Troca de Ferramental / Setup</option>
+              <option value="MANUTENCAO_PREVENTIVA">Manutenção Preventiva / Limpeza</option>
+            </select>
+            <p className="text-[11px] text-slate-500 mt-1.5">
+              Habilitação diferenciada por tarefa (Ex: opera, mas não faz setup ou manutenção).
+            </p>
+          </div>
+
+          {/* Auth Method: RFID vs Dynamic QR TOTP */}
+          <div>
+            <label className="text-xs font-semibold text-slate-500 block mb-2">
+              Método de Leitura na Catraca:
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setAuthMethod("RFID_BADGE")}
+                className={`p-2.5 rounded-xl border text-xs font-semibold transition-all ${
+                  authMethod === "RFID_BADGE"
+                    ? "border-industrial-600 bg-industrial-50 text-industrial-900 dark:bg-industrial-950 dark:text-industrial-100 ring-2 ring-industrial-600"
+                    : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50"
+                }`}
+              >
+                Crachá RFID / NFC
+              </button>
+              <button
+                type="button"
+                onClick={() => setAuthMethod("DYNAMIC_QR")}
+                className={`p-2.5 rounded-xl border text-xs font-semibold transition-all ${
+                  authMethod === "DYNAMIC_QR"
+                    ? "border-purple-600 bg-purple-50 text-purple-900 dark:bg-purple-950 dark:text-purple-100 ring-2 ring-purple-600"
+                    : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50"
+                }`}
+              >
+                QR Code Dinâmico (30s)
+              </button>
+            </div>
+            <p className="text-[11px] text-slate-500 mt-1.5">
+              {authMethod === "RFID_BADGE"
+                ? "Simula proximidade do cartão físico na antena da controladora."
+                : "Simula escaneamento do QR Code com rotação TOTP e assinatura criptográfica."}
             </p>
           </div>
         </div>

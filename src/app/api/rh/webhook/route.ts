@@ -135,18 +135,52 @@ export async function POST(req: NextRequest) {
 
     // 3. Evento S-2230 (Afastamento Médico / Suspensão)
     else if (eventType === "S2230_AFASTAMENTO") {
-      const user = await prisma.user.update({
+      const user = await prisma.user.findUnique({
         where: { registrationNumber: externalEmployeeId },
+      });
+
+      if (!user) {
+        return NextResponse.json({ error: "Colaborador não encontrado." }, { status: 404 });
+      }
+
+      await prisma.user.update({
+        where: { id: user.id },
         data: { status: "AFASTADO_MEDICO" },
       });
 
       effectDescription = `Afastamento legal S-2230 registrado para ${user.name}. Bloqueio instantâneo do torniquete de chão de fábrica (Zona 1). Zona 0 mantida para perícia médica/RH.`;
     }
 
+    // 3b. Evento S-2230 Retorno (Término de Afastamento / ASO Apto NR-07)
+    else if (eventType === "S2230_RETORNO" || eventType === "S2230_REATIVACAO") {
+      const user = await prisma.user.findUnique({
+        where: { registrationNumber: externalEmployeeId },
+      });
+
+      if (!user) {
+        return NextResponse.json({ error: "Colaborador não encontrado." }, { status: 404 });
+      }
+
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { status: "ATIVO" },
+      });
+
+      effectDescription = `Término de afastamento S-2230 processado para ${user.name} (Atestado de Saúde Ocupacional - ASO de Retorno Apto). Acessos à Zona 0 e Zona 1 restabelecidos.`;
+    }
+
     // 4. Evento S-2299 (Desligamento / Rescisão)
     else if (eventType === "S2299_DESLIGAMENTO") {
-      const user = await prisma.user.update({
+      const user = await prisma.user.findUnique({
         where: { registrationNumber: externalEmployeeId },
+      });
+
+      if (!user) {
+        return NextResponse.json({ error: "Colaborador não encontrado." }, { status: 404 });
+      }
+
+      await prisma.user.update({
+        where: { id: user.id },
         data: {
           status: "DESLIGADO",
           zone0Access: false,

@@ -20,9 +20,8 @@
 # Local env files
 .env*.local
 
-# SQLite database
-prisma/dev.db
-prisma/dev.db-journal
+# SQLite database journals
+prisma/*.db-journal
 
 # TypeScript
 *.tsbuildinfo

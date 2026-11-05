@@ -371,17 +371,41 @@ export default function OjtSignOffClient({
             </div>
           </div>
 
-          {/* Submission Success Box */}
+          {/* Submission Result Box */}
           {submissionResult && (
-            <div className="p-5 rounded-2xl border border-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 dark:border-emerald-900 text-xs text-emerald-950 dark:text-emerald-200 space-y-3">
+            <div
+              className={`p-5 rounded-2xl border text-xs space-y-3 ${
+                submissionResult.verdict === "APROVADO"
+                  ? "border-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 dark:border-emerald-900 text-emerald-950 dark:text-emerald-200"
+                  : "border-amber-300 bg-amber-50 dark:bg-amber-950/40 dark:border-amber-900 text-amber-950 dark:text-amber-200"
+              }`}
+            >
               <div className="flex items-center gap-2">
-                <Stamp className="h-5 w-5 text-emerald-600" />
-                <h5 className="font-bold text-sm">Homologação OJT Aprovada e Selada Criptograficamente!</h5>
+                {submissionResult.verdict === "APROVADO" ? (
+                  <Stamp className="h-5 w-5 text-emerald-600" />
+                ) : (
+                  <AlertCircle className="h-5 w-5 text-amber-600" />
+                )}
+                <h5 className="font-bold text-sm">
+                  {submissionResult.verdict === "APROVADO"
+                    ? "Homologação OJT Aprovada e Selada Criptograficamente!"
+                    : "Homologação OJT Registrada com Restrição de Tutela (Nível 2)"}
+                </h5>
               </div>
               <p>
-                O operador <strong>{selectedOperator.name}</strong> foi promovido formalmente a <strong>Nível 3 (Autônomo Habilitado)</strong>. Seu QR Code e crachá agora destravam a catraca da linha (Zona 1).
+                {submissionResult.verdict === "APROVADO" ? (
+                  <>
+                    O operador <strong>{selectedOperator.name}</strong> foi promovido formalmente a{" "}
+                    <strong>Nível 3 (Autônomo Habilitado)</strong>. Seu QR Code e crachá agora destravam a catraca da linha (Zona 1) de forma independente.
+                  </>
+                ) : (
+                  <>
+                    O operador <strong>{selectedOperator.name}</strong> permanecerá em{" "}
+                    <strong>Nível 2 (Operador em Tutela / Shadowing)</strong>. O acesso à Zona 1 exigirá acompanhamento presencial do padrinho Nível 4.
+                  </>
+                )}
               </p>
-              <div className="p-3 rounded-xl bg-white/70 dark:bg-slate-900/70 border border-emerald-200 dark:border-emerald-800 font-mono text-[11px] space-y-1">
+              <div className="p-3 rounded-xl bg-white/70 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 font-mono text-[11px] space-y-1">
                 <div>Hash de Auditoria: {submissionResult.cryptographicHash}</div>
                 <div>Carimbo de Tempo: {submissionResult.timestamp}</div>
               </div>

@@ -29,7 +29,35 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Upsert qualification passport to Nível 1 (Aprendiz Teórico)
+    // Look up existing qualification passport to prevent demoting qualified operators
+    const existingPassport = await prisma.qualificationPassport.findUnique({
+      where: {
+        userId_assetId_subActivity: {
+          userId,
+          assetId: pop.asset.id,
+          subActivity: "OPERACAO_CONTINUA",
+        },
+      },
+    });
+
+    let targetTwiLevel = 1;
+    let targetStatus = "PENDENTE_TEORIA";
+
+    if (existingPassport) {
+      if (existingPassport.twiLevel >= 3) {
+        // Keeps autonomous / multiplier level and restores/confirms HABILITADO
+        targetTwiLevel = existingPassport.twiLevel;
+        targetStatus = "HABILITADO";
+      } else if (existingPassport.twiLevel === 2) {
+        // Keeps Tutela level
+        targetTwiLevel = 2;
+        targetStatus = existingPassport.status === "RECICLAGEM_DELTA_PENDENTE" ? "HABILITADO" : existingPassport.status;
+      } else {
+        targetTwiLevel = 1;
+        targetStatus = "PENDENTE_TEORIA";
+      }
+    }
+
     const passport = await prisma.qualificationPassport.upsert({
       where: {
         userId_assetId_subActivity: {
@@ -51,18 +79,24 @@ export async function POST(req: NextRequest) {
       update: {
         theoryCompletedAt: new Date(),
         theoryScore: score,
-        // Se estava em reciclagem delta, limpa e reabilita
-        status: "PENDENTE_TEORIA",
-        twiLevel: 1,
+        popId: pop.id,
+        twiLevel: targetTwiLevel,
+        status: targetStatus,
+        deltaToleranceDeadline: null,
       },
     });
+
+    const levelMessage = targetTwiLevel >= 3
+      ? `Avaliação Teórica/Reciclagem concluída com ${score}%! Sua habilitação TWI Nível ${targetTwiLevel} permanece ativa e conforme para operação autônoma.`
+      : `Etapa Teórica Concluída com ${score}% de assimilação! Sua habilitação avançou para Nível 1 (Aprendiz Teórico). Dirija-se ao posto para homologação prática (OJT) com o supervisor de linha.`;
 
     return NextResponse.json({
       approved: true,
       score,
       passportId: passport.id,
-      twiLevel: 1,
-      message: `Etapa Teórica Concluída com ${score}% de assimilação! Sua habilitação avançou para Nível 1 (Aprendiz Teórico). Dirija-se ao posto para homologação prática (OJT) com o supervisor de linha.`,
+      twiLevel: targetTwiLevel,
+      status: targetStatus,
+      message: levelMessage,
     });
   } catch (error) {
     console.error("Kiosk completion error:", error);

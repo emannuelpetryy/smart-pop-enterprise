@@ -1,4 +1,5 @@
 import prisma from "./prisma";
+import { verifyTotp } from "./totp";
 
 export interface GateDecisionResult {
   accessGranted: boolean;
@@ -20,20 +21,50 @@ export async function evaluateGateAccess(params: {
   userId?: string;
   badgeNumber?: string;
   registrationNumber?: string;
+  qrPayload?: string;
+  totpCode?: string;
   zone: "ZONA_0_PORTARIA" | "ZONA_1_CHAO_DE_FABRICA";
   assetCode?: string;
   subActivity?: string;
 }): Promise<GateDecisionResult> {
   const startTime = performance.now();
 
+  // Safely build OR conditions without empty objects
+  const orConditions: any[] = [];
+  if (params.userId) orConditions.push({ id: params.userId });
+  if (params.badgeNumber) orConditions.push({ badgeNumber: params.badgeNumber });
+  if (params.registrationNumber) orConditions.push({ registrationNumber: params.registrationNumber });
+
+  // If dynamic QR payload was provided, attempt extracting identifier
+  let extractedTotp: string | null = params.totpCode || null;
+  if (params.qrPayload) {
+    try {
+      const parsed = JSON.parse(params.qrPayload);
+      if (parsed.uid) orConditions.push({ id: parsed.uid });
+      if (parsed.reg) orConditions.push({ registrationNumber: parsed.reg });
+      if (parsed.totp) extractedTotp = parsed.totp;
+    } catch {
+      // invalid JSON payload
+    }
+  }
+
+  if (orConditions.length === 0) {
+    const latency = Math.round(performance.now() - startTime);
+    return {
+      accessGranted: false,
+      decisionReason: "CRACHÁ_OU_MATRICULA_INEXISTENTE_NO_CADASTRO",
+      statusCode: "BLOCKED_LEGAL",
+      zone: params.zone,
+      employeeName: "Desconhecido",
+      registrationNumber: params.registrationNumber || "N/A",
+      latencyMs: latency,
+    };
+  }
+
   // Find user by id, badge or registration
   const user = await prisma.user.findFirst({
     where: {
-      OR: [
-        params.userId ? { id: params.userId } : {},
-        params.badgeNumber ? { badgeNumber: params.badgeNumber } : {},
-        params.registrationNumber ? { registrationNumber: params.registrationNumber } : {},
-      ],
+      OR: orConditions,
     },
     include: {
       passports: {
@@ -56,6 +87,24 @@ export async function evaluateGateAccess(params: {
       registrationNumber: params.registrationNumber || "N/A",
       latencyMs: latency,
     };
+  }
+
+  // If a TOTP code was submitted (via Dynamic QR or contingency), verify it
+  if (extractedTotp) {
+    const isTotpValid = verifyTotp(user.totpSecret, extractedTotp);
+    if (!isTotpValid) {
+      const latency = Math.round(performance.now() - startTime);
+      await logAccess(user.id, params.zone, false, "BLOQUEIO_QR_TOTP_EXPIRADO", latency);
+      return {
+        accessGranted: false,
+        decisionReason: "ACESSO RECUSADO: QR Code Dinâmico inválido ou expirado (janela de 30s excedida). Atualize a tela do passaporte.",
+        statusCode: "BLOCKED_LEGAL",
+        zone: params.zone,
+        employeeName: user.name,
+        registrationNumber: user.registrationNumber,
+        latencyMs: latency,
+      };
+    }
   }
 
   // --- REGRA ZONA 0: PORTARIA EXTERNA (BLINDAGEM JURÍDICA CLT ART. 4º) ---
@@ -208,7 +257,84 @@ export async function evaluateGateAccess(params: {
     }
   }
 
-  // Verificar Níveis TWI
+  // 3. Verificação de Status do Passaporte (Revogação, Suspensão, Validade Periódica)
+  if (passport.status === "REVOGADO") {
+    const reason = `BLOQUEIO DE SEGURANÇA: Habilitação para este ativo [${targetAssetCode}] foi REVOGADA pela Engenharia / RH.`;
+    await logAccess(user.id, params.zone, false, reason, latency);
+    return {
+      accessGranted: false,
+      decisionReason: reason,
+      statusCode: "BLOCKED_TRAINING",
+      zone: params.zone,
+      employeeName: user.name,
+      registrationNumber: user.registrationNumber,
+      latencyMs: latency,
+      details: {
+        twiLevel: 0,
+        targetAsset: targetAssetCode,
+        instructions: "Habilitação revogada. Contate a Engenharia de Segurança ou RH.",
+      },
+    };
+  }
+
+  if (passport.status === "SUSPENSO") {
+    const reason = `BLOQUEIO DE SEGURANÇA: Habilitação SUSPENSA temporariamente por desvio de processo (Auditoria LPA).`;
+    await logAccess(user.id, params.zone, false, reason, latency);
+    return {
+      accessGranted: false,
+      decisionReason: reason,
+      statusCode: "BLOCKED_TRAINING",
+      zone: params.zone,
+      employeeName: user.name,
+      registrationNumber: user.registrationNumber,
+      latencyMs: latency,
+      details: {
+        twiLevel: 1,
+        targetAsset: targetAssetCode,
+        instructions: "Realize a reciclagem prática em bancada com o supervisor.",
+      },
+    };
+  }
+
+  if (passport.expiresAt && new Date() > passport.expiresAt) {
+    const reason = `BLOQUEIO DE RECICLAGEM: Validade periódica da certificação expirou (NR-12). Revalidação obrigatória.`;
+    await logAccess(user.id, params.zone, false, reason, latency);
+    return {
+      accessGranted: false,
+      decisionReason: reason,
+      statusCode: "BLOCKED_DELTA_EXPIRED",
+      zone: params.zone,
+      employeeName: user.name,
+      registrationNumber: user.registrationNumber,
+      latencyMs: latency,
+      details: {
+        twiLevel: passport.twiLevel,
+        targetAsset: targetAssetCode,
+        instructions: "Realize a prova periódica de renovação no quiosque ou junto à segurança.",
+      },
+    };
+  }
+
+  if (passport.status === "PENDENTE_TEORIA") {
+    const reason = `BLOQUEIO HARD GATE: Treinamento teórico obrigatório não concluído ou pendente no tablet/quiosque.`;
+    await logAccess(user.id, params.zone, false, reason, latency);
+    return {
+      accessGranted: false,
+      decisionReason: reason,
+      statusCode: "BLOCKED_TRAINING",
+      zone: params.zone,
+      employeeName: user.name,
+      registrationNumber: user.registrationNumber,
+      latencyMs: latency,
+      details: {
+        twiLevel: passport.twiLevel,
+        targetAsset: targetAssetCode,
+        instructions: "Acesse a Sala de Acolhimento e conclua a carga horária no tablet da sala de integração.",
+      },
+    };
+  }
+
+  // 4. Verificar Níveis TWI para passaportes HABILITADOS
   if (passport.twiLevel >= 3) {
     // Nível 3 (Autônomo) ou Nível 4 (Multiplicador)
     const reason = `ACESSO LIBERADO TWI NÍVEL ${passport.twiLevel}: Operador habilitado com OJT presencial aprovado e teoria 100%.`;

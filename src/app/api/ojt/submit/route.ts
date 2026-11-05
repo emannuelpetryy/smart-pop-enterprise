@@ -94,6 +94,31 @@ export async function POST(req: NextRequest) {
           expiresAt: new Date(Date.now() + 365 * 24 * 3600 * 1000),
         },
       });
+    } else {
+      // Reprovado - Define / Mantém Nível 2 (Regime de Tutela / Shadowing obrigatório com Padrinho)
+      await prisma.qualificationPassport.upsert({
+        where: {
+          userId_assetId_subActivity: {
+            userId: operatorId,
+            assetId,
+            subActivity,
+          },
+        },
+        create: {
+          userId: operatorId,
+          assetId,
+          subActivity,
+          popId,
+          twiLevel: 2,
+          theoryCompletedAt: new Date(),
+          theoryScore: 80.0,
+          status: "PENDENTE_TEORIA",
+        },
+        update: {
+          twiLevel: 2,
+          ojtSupervisorId: supervisorId,
+        },
+      });
     }
 
     return NextResponse.json({

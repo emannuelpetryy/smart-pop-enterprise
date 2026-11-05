@@ -73,6 +73,14 @@ export default function RhLifecycleClient({
                 : u
             )
           );
+        } else if (eventType === "S2230_RETORNO" || eventType === "S2230_REATIVACAO") {
+          setUsers((prev) =>
+            prev.map((u) =>
+              u.registrationNumber === externalEmployeeId
+                ? { ...u, status: "ATIVO" }
+                : u
+            )
+          );
         } else if (eventType === "S2299_DESLIGAMENTO") {
           setUsers((prev) =>
             prev.map((u) =>
@@ -126,16 +134,16 @@ export default function RhLifecycleClient({
           <span className="text-[11px] font-mono text-slate-400">eSocial v1.2 Compliant</span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
           {/* S-2200 Admissão */}
           <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 flex flex-col justify-between space-y-3">
             <div>
               <div className="flex items-center gap-2">
                 <UserPlus className="h-4 w-4 text-emerald-600" />
-                <span className="font-bold text-xs text-slate-900 dark:text-white">S-2200: Nova Admissão</span>
+                <span className="font-bold text-xs text-slate-900 dark:text-white">S-2200: Admissão</span>
               </div>
               <p className="text-[11px] text-slate-500 mt-1">
-                Gera cadastro, libera Zona 0 (entrada legal) e atribui trilha teórica na sala de quiosques.
+                Gera cadastro, libera Zona 0 e aloca trilha teórica em quiosque.
               </p>
             </div>
             <button
@@ -149,7 +157,7 @@ export default function RhLifecycleClient({
                   plant: "Planta São Bernardo",
                 });
               }}
-              className="w-full py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold text-xs transition-colors shadow-sm"
+              className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs transition-colors shadow-sm min-h-[44px]"
             >
               Simular Admissão
             </button>
@@ -163,7 +171,7 @@ export default function RhLifecycleClient({
                 <span className="font-bold text-xs text-slate-900 dark:text-white">S-2206: Transferência</span>
               </div>
               <p className="text-[11px] text-slate-500 mt-1">
-                Revoga acessos da linha anterior e aloca nova matriz de qualificação de posto.
+                Revoga linha anterior e aloca nova matriz de posto.
               </p>
             </div>
             <button
@@ -174,7 +182,7 @@ export default function RhLifecycleClient({
                   newAssetCode,
                 });
               }}
-              className="w-full py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold text-xs transition-colors shadow-sm"
+              className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-xs transition-colors shadow-sm min-h-[44px]"
             >
               Simular Transferência
             </button>
@@ -188,7 +196,7 @@ export default function RhLifecycleClient({
                 <span className="font-bold text-xs text-slate-900 dark:text-white">S-2230: Afastamento</span>
               </div>
               <p className="text-[11px] text-slate-500 mt-1">
-                Bloqueia Zona 1 (área de risco) para evitar acidentes durante licença médica.
+                Bloqueia Zona 1 (área de risco) para evitar acidentes em licença.
               </p>
             </div>
             <button
@@ -198,9 +206,33 @@ export default function RhLifecycleClient({
                   reason: "Licença Médica Ortopédica CID M54",
                 });
               }}
-              className="w-full py-2 rounded-lg bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-semibold text-xs transition-colors shadow-sm"
+              className="w-full py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-bold text-xs transition-colors shadow-sm min-h-[44px]"
             >
               Simular Afastamento
+            </button>
+          </div>
+
+          {/* S-2230 Retorno de Afastamento (ASO Apto) */}
+          <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 flex flex-col justify-between space-y-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="h-4 w-4 text-teal-600" />
+                <span className="font-bold text-xs text-slate-900 dark:text-white">S-2230: Retorno (Apto)</span>
+              </div>
+              <p className="text-[11px] text-slate-500 mt-1">
+                ASO de retorno emitido (NR-07). Restabelece acessos às catracas.
+              </p>
+            </div>
+            <button
+              disabled={isProcessing}
+              onClick={() => {
+                handleTriggerEvent("S2230_RETORNO", selectedUserForTransfer, {
+                  reason: "Retorno de Afastamento com ASO Apto (Medicina do Trabalho)",
+                });
+              }}
+              className="w-full py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-bold text-xs transition-colors shadow-sm min-h-[44px]"
+            >
+              Simular Retorno Apto
             </button>
           </div>
 
@@ -209,10 +241,10 @@ export default function RhLifecycleClient({
             <div>
               <div className="flex items-center gap-2">
                 <UserMinus className="h-4 w-4 text-rose-600" />
-                <span className="font-bold text-xs text-slate-900 dark:text-white">S-2299: Desligamento</span>
+                <span className="font-bold text-xs text-slate-900 dark:text-white">S-2299: Rescisão</span>
               </div>
               <p className="text-[11px] text-slate-500 mt-1">
-                Corte imediato de crachás físicos, QR Codes e catracas em 100% das zonas da empresa.
+                Corte imediato de crachás físicos, QR Codes e catracas em 100% das áreas.
               </p>
             </div>
             <button
@@ -222,7 +254,7 @@ export default function RhLifecycleClient({
                   reason: "Rescisão Contratual sem Justa Causa",
                 });
               }}
-              className="w-full py-2 rounded-lg bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-semibold text-xs transition-colors shadow-sm"
+              className="w-full py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-bold text-xs transition-colors shadow-sm min-h-[44px]"
             >
               Simular Desligamento
             </button>

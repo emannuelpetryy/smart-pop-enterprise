@@ -28,6 +28,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Operador não cadastrado." }, { status: 404 });
     }
 
+    // Safety lock: Verify employee is legally active (not on medical leave, fired, or on vacation)
+    if (operator.status !== "ATIVO") {
+      const statusLabels: Record<string, string> = {
+        AFASTADO_MEDICO: "Colaborador com afastamento médico legal ativo (eSocial S-2230).",
+        DESLIGADO: "Colaborador com rescisão contratual processada (eSocial S-2299).",
+        FERIAS: "Colaborador em período de férias regulamentares.",
+      };
+      return NextResponse.json(
+        {
+          error: `BLOQUEIO DE SEGURANÇA NR-01/NR-12: ${statusLabels[operator.status] || "Colaborador inativo"}. Proibido acionamento ou liberação de máquinas industriais.`,
+        },
+        { status: 403 }
+      );
+    }
+
     const hasAutonomousAccess = operator.passports.some((p) => p.twiLevel >= 3);
     if (!hasAutonomousAccess && operator.role !== "SUPERVISOR") {
       return NextResponse.json(
